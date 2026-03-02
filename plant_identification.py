@@ -1,361 +1,154 @@
-# [1] Imports
 import streamlit as st
-import requests
+from google import genai
 from PIL import Image
 from transformers import pipeline
-from functools import lru_cache
 
-# [2] Language Setup
-LANGUAGES = {
-    "English": "en",
-    "हिन्दी (Hindi)": "hi",
-    "తెలుగు (Telugu)": "te",
-    "தமிழ் (Tamil)": "ta",
+# 1. Słownik tłumaczeń (English jako domyślny)
+TRANSLATIONS = {
+    "English": {
+        "title": "🌿 PlantVerse AI Identification",
+        "mode_selection": "Choose Identification Engine",
+        "mode_1": "Original (FloraSense HF)",
+        "mode_2": "Advanced (Gemini AI)",
+        "mode_3": "Hybrid (FloraSense + Gemini Verification)",
+        "header_upload": "📷 Upload plant photo",
+        "btn_identify": "Identify Plant 🔍",
+        "sidebar_settings": "Settings",
+        "api_key_label": "Gemini API Key (Modes 2 & 3)",
+        "api_key_help": "Get it for free at aistudio.google.com",
+        "result_header": "📊 Results:",
+        "spinner_running": "Processing image with {mode}...",
+        "prompt_gemini": "Identify this plant. Provide: Name, Description, Taxonomy, and Uses. Answer in English using Markdown.",
+        "prompt_hybrid": """
+            The local model (FloraSense) identified this plant as '{label}'. 
+            Analyze the attached image and:
+            1. Check if this identification is correct.
+            2. If FloraSense is wrong, identify the plant correctly and explain why.
+            3. Provide a detailed botanical report (Name, Taxonomy, Description, Uses).
+            Answer in English using Markdown. Do not use conversational filler.
+        """
+    },
+    "Polski": {
+        "title": "🌿 PlantVerse AI - Identyfikacja",
+        "mode_selection": "Wybierz silnik identyfikacji",
+        "mode_1": "Oryginalny (FloraSense HF)",
+        "mode_2": "Zaawansowany (Gemini AI)",
+        "mode_3": "Hybrydowy (FloraSense + Weryfikacja Gemini)",
+        "header_upload": "📷 Prześlij zdjęcie rośliny",
+        "btn_identify": "Zidentyfikuj roślinę 🔍",
+        "sidebar_settings": "Ustawienia",
+        "api_key_label": "Klucz API Gemini (Tryb 2 i 3)",
+        "api_key_help": "Pobierz darmowy klucz na aistudio.google.com",
+        "result_header": "📊 Wyniki:",
+        "spinner_running": "Przetwarzanie w trybie {mode}...",
+        "prompt_gemini": "Zidentyfikuj tę roślinę. Podaj: Nazwę, Opis, Taksonomię i Zastosowania. Odpowiedz po polsku używając Markdown.",
+        "prompt_hybrid": """
+            Model lokalny (FloraSense) zidentyfikował tę roślinę jako '{label}'. 
+            Przeanalizuj załączone zdjęcie i:
+            1. Sprawdź, czy ta identyfikacja jest poprawna.
+            2. Jeśli model lokalny się pomylił, podaj poprawną nazwę i wyjaśnij dlaczego.
+            3. Przygotuj szczegółowy raport botaniczny (Nazwa, Taksonomia, Opis, Zastosowania).
+            Odpowiedz po polsku używając Markdown. Nie używaj zbędnych wstępów.
+        """
+    }
 }
 
-# [3] Translate Function
-def translate_text(text, target_lang):
-    try:
-        url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            "client": "gtx",
-            "sl": "en",
-            "tl": target_lang,
-            "dt": "t",
-            "q": text
-        }
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-        return data[0][0][0]
-    except:
-        return text
+# --- Silniki AI ---
 
-# [4] Classifier
 @st.cache_resource
-def load_classifier():
+def load_hf_model():
+    """Ładuje model Hugging Face do pamięci podręcznej."""
     return pipeline("image-classification", model="Sisigoks/FloraSense")
 
-def predict_species(image: Image.Image):
-    classifier = load_classifier()
+def run_hf_prediction(image):
+    """Uruchamia klasyfikację modelem lokalnym."""
+    classifier = load_hf_model()
     if image.mode != "RGB":
         image = image.convert("RGB")
     preds = classifier(image)
     return preds[0]["label"], preds[0]["score"]
 
-# [5] Wikipedia Search
-@st.cache_data
-def get_wikipedia_title(name: str):
-    url = "https://en.wikipedia.org/w/api.php"
-    params = {"action": "query", "list": "search", "srsearch": name, "format": "json"}
-    data = requests.get(url, params=params, timeout=10).json()
-    return data["query"]["search"][0]["title"] if data["query"]["search"] else name
-
-# [6] Wikidata Taxonomy
-@st.cache_data
-def get_taxonomy_from_wikidata(label: str):
-    search = requests.get(
-        "https://www.wikidata.org/w/api.php",
-        params={"action": "wbsearchentities", "search": label, "language": "en", "format": "json"},
-        timeout=5
-    ).json()
-    if not search.get("search"):
-        return {"error": f"No Wikidata entity for '{label}'."}
-    eid = search["search"][0]["id"]
-
-    @lru_cache(None)
-    def fetch(e):
-        return requests.get(f"https://www.wikidata.org/wiki/Special:EntityData/{e}.json", timeout=5).json()["entities"][e]
-
-    def find_taxon(e, depth=0):
-        if depth > 5: return None
-        ent = fetch(e)
-        if "P225" in ent.get("claims", {}) and "P171" in ent["claims"]:
-            return e
-        for prop in ("P31", "P279"):
-            for cl in ent.get("claims", {}).get(prop, []):
-                nid = cl["mainsnak"]["datavalue"]["value"]["id"]
-                res = find_taxon(nid, depth + 1)
-                if res: return res
-        return None
-
-    taxon_e = find_taxon(eid)
-    if not taxon_e: return {"error": f"No taxon root for '{eid}'."}
-
-    taxonomy = {}
-    def collect(e, lvl=0):
-        if lvl > 20: return
-        ent = fetch(e)
-        sci = ent.get("claims", {}).get("P225", [{}])[0].get("mainsnak", {}).get("datavalue", {}).get("value", "")
-        rank_id = ent.get("claims", {}).get("P105", [{}])[0].get("mainsnak", {}).get("datavalue", {}).get("value", {}).get("id", "")
-        rank = fetch(rank_id).get("labels", {}).get("en", {}).get("value", "") if rank_id else ""
-        if sci: taxonomy[rank.capitalize() or f"Rank{lvl}"] = sci
-        parent = ent.get("claims", {}).get("P171", [{}])[0].get("mainsnak", {}).get("datavalue", {}).get("value", {}).get("id")
-        if parent: collect(parent, lvl + 1)
-
-    collect(taxon_e)
-    return taxonomy
-
-# [7] Medicinal Uses from Wikipedia
-def get_medicinal_uses_from_wikipedia(title: str, target_lang="en"):
+def run_gemini_analysis(image, prompt, api_key):
+    """Uruchamia analizę modelem Gemini 2.0 Flash."""
+    if not api_key:
+        return "⚠️ Error: API Key is missing! Please check the sidebar."
     try:
-        url = "https://en.wikipedia.org/w/api.php"
-        sections = requests.get(url, params={
-            "action": "parse", "page": title, "prop": "sections", "format": "json"
-        }, timeout=10).json().get("parse", {}).get("sections", [])
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=[prompt, image]
+        )
+        return response.text
+    except Exception as e:
+        return f"❌ API Error: {str(e)}"
 
-        section_index = next((sec["index"] for sec in sections if "medicinal" in sec["line"].lower() or "traditional medicine" in sec["line"].lower()), None)
-        if not section_index: return None
+# --- Główne UI ---
 
-        html = requests.get(url, params={
-            "action": "parse", "page": title, "format": "json",
-            "prop": "text", "section": section_index
-        }, timeout=10).json().get("parse", {}).get("text", {}).get("*", "")
-
-        from bs4 import BeautifulSoup
-        import re
-        soup = BeautifulSoup(html, "html.parser")
-        paragraphs = soup.find_all("p")
-        bullet_points = []
-
-        for p in paragraphs:
-            text = p.get_text().strip()
-            text = re.sub(r"\[\d+\]", "", text)
-            if len(text.split()) < 5: continue
-            for sent in re.split(r"\.\s+", text):
-                sent = sent.strip().strip('.')
-                if len(sent.split()) >= 5 and not sent.lower().startswith("there is insufficient"):
-                    if target_lang != "en":
-                        sent = translate_text(sent, target_lang)
-                    bullet_points.append(f"{sent}.")
-        return bullet_points[:5] if bullet_points else None
-    except Exception:
-        return None
-
-# [8] Main UI
 def main():
-    st.set_page_config(page_title="PlantVerse", layout="wide")
+    # Wybór języka (Domyślnie pierwszy na liście - English)
+    selected_lang = st.selectbox("🌐 Language / Język", list(TRANSLATIONS.keys()))
+    lang = TRANSLATIONS[selected_lang]
 
-    selected_lang = st.selectbox("🌐 Select Language", list(LANGUAGES.keys()))
-    lang_code = LANGUAGES[selected_lang]
+    st.title(lang["title"])
+    
+    # Sidebar - Ustawienia
+    with st.sidebar:
+        st.header(lang["sidebar_settings"])
+        
+        mode_map = {
+            lang["mode_1"]: "ORIGINAL",
+            lang["mode_2"]: "GEMINI",
+            lang["mode_3"]: "HYBRID"
+        }
+        selected_mode_label = st.radio(lang["mode_selection"], list(mode_map.keys()))
+        current_mode = mode_map[selected_mode_label]
+        
+        api_key = ""
+        if current_mode in ["GEMINI", "HYBRID"]:
+            api_key = st.text_input(lang["api_key_label"], type="password", help=lang["api_key_help"])
+        
+        st.divider()
+        if current_mode == "ORIGINAL":
+            st.info("Using local model: FloraSense")
+        else:
+            st.info("Using cloud model: Gemini 2.0 Flash")
 
-    st.title(translate_text("PlantVerse AR", lang_code))
+    # Upload zdjęcia
+    st.subheader(lang["header_upload"])
+    img_file = st.file_uploader(lang["header_upload"], type=["jpg", "jpeg", "png"], label_visibility="collapsed")
 
-    st.subheader("📷 " + translate_text("Upload a plant image", lang_code))
-    st.markdown("📂 " + translate_text("Click 'Browse files' below to upload", lang_code))
-
-    img_file = st.file_uploader("", type=["jpg", "jpeg", "png"])
     if img_file:
         img = Image.open(img_file)
-        st.image(img, caption="📸", use_container_width=True)
+        # Podgląd zdjęcia (ograniczona szerokość dla estetyki)
+        st.image(img, width=450)
 
-        if st.button(translate_text("Predict", lang_code)):
-            with st.spinner(translate_text("Identifying plant...", lang_code)):
-                label, score = predict_species(img)
-                wiki_title = get_wikipedia_title(label)
-                translated_title = translate_text(wiki_title, lang_code)
-                st.info(f"{translate_text('Wikipedia Title', lang_code)}: **{translated_title}**")
+        if st.button(lang["btn_identify"], type="primary"):
+            with st.spinner(lang["spinner_running"].format(mode=selected_mode_label)):
+                
+                if current_mode == "ORIGINAL":
+                    label, score = run_hf_prediction(img)
+                    st.divider()
+                    st.success(f"**Identified Species:** {label}")
+                    st.info(f"**Confidence Score:** {score:.2%}")
 
-                taxonomy = get_taxonomy_from_wikidata(wiki_title)
-                st.subheader(translate_text("Taxonomy Tree", lang_code))
-                if "error" in taxonomy:
-                    st.warning(translate_text(taxonomy["error"], lang_code))
-                else:
-                    for r, v in taxonomy.items():
-                        st.markdown(f"**{translate_text(r, lang_code)}:** {translate_text(v, lang_code)}")
+                elif current_mode == "GEMINI":
+                    result = run_gemini_analysis(img, lang["prompt_gemini"], api_key)
+                    st.divider()
+                    st.subheader(lang["result_header"])
+                    st.markdown(result)
 
-                st.subheader(translate_text("💊 Uses", lang_code))
-
-                med_use = get_medicinal_uses_from_wikipedia(wiki_title, target_lang=lang_code)
-                if med_use:
-                    for point in med_use:
-                        st.markdown(f"- {point}")
-                else:
-                    st.info(translate_text("No specific medicinal uses found.", lang_code))
+                elif current_mode == "HYBRID":
+                    # Krok 1: Predykcja FloraSense
+                    label, score = run_hf_prediction(img)
+                    st.write(f"🔍 **FloraSense Suggestion:** {label} ({score:.2%})")
+                    
+                    # Krok 2: Weryfikacja przez Gemini
+                    hybrid_prompt = lang["prompt_hybrid"].format(label=label)
+                    result = run_gemini_analysis(img, hybrid_prompt, api_key)
+                    
+                    st.divider()
+                    st.subheader(lang["result_header"])
+                    st.markdown(result)
 
 if __name__ == "__main__":
     main()
-
-# # [1] Imports
-# import streamlit as st
-# import requests
-# from PIL import Image
-# from transformers import pipeline
-# from functools import lru_cache
-
-# # [2] Language Setup
-# LANGUAGES = {
-#     "English": "en",
-#     "हिन्दी (Hindi)": "hi",
-#     "తెలుగు (Telugu)": "te",
-#     "தமிழ் (Tamil)": "ta",
-# }
-
-# # [3] Translate Function
-# def translate_text(text, target_lang):
-#     try:
-#         url = "https://translate.googleapis.com/translate_a/single"
-#         params = {
-#             "client": "gtx",
-#             "sl": "en",
-#             "tl": target_lang,
-#             "dt": "t",
-#             "q": text
-#         }
-#         response = requests.get(url, params=params, timeout=10)
-#         data = response.json()
-#         return data[0][0][0]
-#     except:
-#         return text
-
-# # [4] Classifier
-# @st.cache_resource
-# def load_classifier():
-#     return pipeline("image-classification", model="Sisigoks/FloraSense")
-
-# def predict_species(image: Image.Image):
-#     classifier = load_classifier()
-#     if image.mode != "RGB":
-#         image = image.convert("RGB")
-#     preds = classifier(image)
-#     return preds[0]["label"], preds[0]["score"]
-
-# # [5] Wikipedia Search
-# @st.cache_data
-# def get_wikipedia_title(name: str):
-#     url = "https://en.wikipedia.org/w/api.php"
-#     params = {"action": "query", "list": "search", "srsearch": name, "format": "json"}
-#     data = requests.get(url, params=params, timeout=10).json()
-#     return data["query"]["search"][0]["title"] if data["query"]["search"] else name
-
-# # [6] Wikidata Taxonomy
-# @st.cache_data
-# def get_taxonomy_from_wikidata(label: str):
-#     search = requests.get(
-#         "https://www.wikidata.org/w/api.php",
-#         params={"action": "wbsearchentities", "search": label, "language": "en", "format": "json"},
-#         timeout=5
-#     ).json()
-#     if not search.get("search"):
-#         return {"error": f"No Wikidata entity for '{label}'."}
-#     eid = search["search"][0]["id"]
-
-#     @lru_cache(None)
-#     def fetch(e):
-#         url = f"https://www.wikidata.org/wiki/Special:EntityData/{e}.json"
-#     try:
-#         response = requests.get(url, timeout=5)
-#         response.raise_for_status()  # Raises HTTPError if status is not 200
-#         data = response.json()
-#         return data["entities"][e]
-#     except Exception as err:
-#         print(f"❌ Failed to fetch Wikidata entity {e}: {err}")
-#         return {}  # or return None
-
-#     def find_taxon(e, depth=0):
-#         if depth > 5: return None
-#         ent = fetch(e)
-#         if "P225" in ent.get("claims", {}) and "P171" in ent["claims"]:
-#             return e
-#         for prop in ("P31", "P279"):
-#             for cl in ent.get("claims", {}).get(prop, []):
-#                 nid = cl["mainsnak"]["datavalue"]["value"]["id"]
-#                 res = find_taxon(nid, depth + 1)
-#                 if res: return res
-#         return None
-
-#     taxon_e = find_taxon(eid)
-#     if not taxon_e: return {"error": f"No taxon root for '{eid}'."}
-
-#     taxonomy = {}
-#     def collect(e, lvl=0):
-#         if lvl > 20: return
-#         ent = fetch(e)
-#         sci = ent.get("claims", {}).get("P225", [{}])[0].get("mainsnak", {}).get("datavalue", {}).get("value", "")
-#         rank_id = ent.get("claims", {}).get("P105", [{}])[0].get("mainsnak", {}).get("datavalue", {}).get("value", {}).get("id", "")
-#         rank = fetch(rank_id).get("labels", {}).get("en", {}).get("value", "") if rank_id else ""
-#         if sci: taxonomy[rank.capitalize() or f"Rank{lvl}"] = sci
-#         parent = ent.get("claims", {}).get("P171", [{}])[0].get("mainsnak", {}).get("datavalue", {}).get("value", {}).get("id")
-#         if parent: collect(parent, lvl + 1)
-
-#     collect(taxon_e)
-#     return taxonomy
-
-# # [7] Medicinal Uses from Wikipedia
-# def get_medicinal_uses_from_wikipedia(title: str, target_lang="en"):
-#     try:
-#         url = "https://en.wikipedia.org/w/api.php"
-#         sections = requests.get(url, params={
-#             "action": "parse", "page": title, "prop": "sections", "format": "json"
-#         }, timeout=10).json().get("parse", {}).get("sections", [])
-
-#         section_index = next((sec["index"] for sec in sections if "medicinal" in sec["line"].lower() or "traditional medicine" in sec["line"].lower()), None)
-#         if not section_index: return None
-
-#         html = requests.get(url, params={
-#             "action": "parse", "page": title, "format": "json",
-#             "prop": "text", "section": section_index
-#         }, timeout=10).json().get("parse", {}).get("text", {}).get("*", "")
-
-#         from bs4 import BeautifulSoup
-#         import re
-#         soup = BeautifulSoup(html, "html.parser")
-#         paragraphs = soup.find_all("p")
-#         bullet_points = []
-
-#         for p in paragraphs:
-#             text = p.get_text().strip()
-#             text = re.sub(r"\[\d+\]", "", text)
-#             if len(text.split()) < 5: continue
-#             for sent in re.split(r"\.\s+", text):
-#                 sent = sent.strip().strip('.')
-#                 if len(sent.split()) >= 5 and not sent.lower().startswith("there is insufficient"):
-#                     if target_lang != "en":
-#                         sent = translate_text(sent, target_lang)
-#                     bullet_points.append(f"{sent}.")
-#         return bullet_points[:5] if bullet_points else None
-#     except Exception:
-#         return None
-
-# # [8] Main UI
-# def main():
-#     st.set_page_config(page_title="PlantVerse", layout="wide")
-
-#     selected_lang = st.selectbox("🌐 Select Language", list(LANGUAGES.keys()))
-#     lang_code = LANGUAGES[selected_lang]
-
-#     st.title(translate_text("PlantVerse AR", lang_code))
-
-#     st.subheader("📷 " + translate_text("Upload a plant image", lang_code))
-#     st.markdown("📂 " + translate_text("Click 'Browse files' below to upload", lang_code))
-
-#     img_file = st.file_uploader("", type=["jpg", "jpeg", "png"])
-#     if img_file:
-#         img = Image.open(img_file)
-#         st.image(img, caption="📸", use_container_width=True)
-
-#         if st.button(translate_text("Predict", lang_code)):
-#             with st.spinner(translate_text("Identifying plant...", lang_code)):
-#                 label, score = predict_species(img)
-#                 wiki_title = get_wikipedia_title(label)
-#                 translated_title = translate_text(wiki_title, lang_code)
-#                 st.info(f"{translate_text('Wikipedia Title', lang_code)}: **{translated_title}**")
-
-#                 taxonomy = get_taxonomy_from_wikidata(wiki_title)
-#                 st.subheader(translate_text("Taxonomy Tree", lang_code))
-#                 if "error" in taxonomy:
-#                     st.warning(translate_text(taxonomy["error"], lang_code))
-#                 else:
-#                     for r, v in taxonomy.items():
-#                         st.markdown(f"**{translate_text(r, lang_code)}:** {translate_text(v, lang_code)}")
-
-#                 st.subheader(translate_text("💊 Uses", lang_code))
-
-#                 med_use = get_medicinal_uses_from_wikipedia(wiki_title, target_lang=lang_code)
-#                 if med_use:
-#                     for point in med_use:
-#                         st.markdown(f"- {point}")
-#                 else:
-#                     st.info(translate_text("No specific medicinal uses found.", lang_code))
-
-# if __name__ == "__main__":
-#     main()
