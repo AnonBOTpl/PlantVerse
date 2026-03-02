@@ -1,69 +1,26 @@
----
-title: PlantVerse AR
-emoji: 🌿
-colorFrom: green
-colorTo: blue
-sdk: streamlit
-sdk_version: "1.46.1"
-app_file: app.py
-pinned: false
----
-
-# 🌿 PlantVerse AR
-
-**Discover the plants around you — visually, geographically, and culturally.**  
-PlantVerse AR is a multilingual, interactive Streamlit app that allows users to identify plants using AI and explore where they grow, why they thrive there, and what they're traditionally used for.
-
----
-
-## ✨ Features
-
-- 📷 **Plant Identifier:** Upload an image to identify the plant using AI  
-- 🌐 **Multilingual UI:** Automatically translates plant info into Indian languages (e.g., Telugu, Hindi, Tamil)  
-- 📖 **Wikipedia + Wikidata Insights:** Learn about taxonomy, medicinal uses, and plant hierarchy  
-- 🗺️ **AR + Location Explorer:** Find where the plant naturally grows based on your location  
-- 📌 **Nearby Observations:** Uses iNaturalist data to show where others have spotted the plant  
-- 📦 **Export to JSON:** Download the results of your plant location search  
-
----
-
-## 🛠️ How It Works
-
-This app has two main modules:
-
-### 1. Plant Identifier
-- Upload a plant image
-- AI model (from Hugging Face) predicts the species
-- Wikipedia + Wikidata APIs fetch taxonomy and medicinal uses
-- Translates results into your chosen language using Google Translate API
-
-### 2. AR + Location-Based Explorer
-- Detects your current location (or lets you enter it manually)
-- Searches for nearby plant sightings using iNaturalist
-- Displays nearby locations with photos, coordinates, and quality info
-
----
-
-## 🚀 Run Locally
-
-```bash
-git clone https://huggingface.co/spaces/Aashritha05/PlantVerse
-cd PlantVerse
-pip install -r requirements.txt
-streamlit run app.py
-
-PlantVerse/
-│
-├── app.py                      # Streamlit entry-point
-├── plant_identification.py     # Plant identification module
-├── ar_location_plant_map.py    # Location + AR mapping module
-├── requirements.txt            # Python dependencies
-├── .huggingface.yml            # Hugging Face config (streamlit + app.py)
-└── README.md                   # This file
-
-
----
-
-✅ Just copy and paste this entire block into your `README.md` file, and it will pass validation.
-
-Let me know if you'd like me to generate the `.huggingface.yml` file as well.
+🌿 PlantVerse AR - Advanced Plant Identification
+PlantVerse AR is a modern, multilingual interactive tool designed to identify plants using cutting-edge AI and explore their natural habitats. This version features a significant upgrade including a dual-model verification system.
+✨ Key Features
+Hybrid AI Identification: A sophisticated pipeline combining the local FloraSense model with Gemini 2.0 Flash for expert-level verification.
+Multilingual Support: Full interface and botanical analysis available in both English (Default) and Polish.
+Location Mapping: Discover real-time plant observations nearby using integrated iNaturalist data.
+Botanical Insights: Comprehensive reports featuring scientific taxonomy, detailed descriptions, and traditional medicinal uses.
+🛠️ Identification Engines
+Original (FloraSense): Fast, local classification using the FloraSense (Hugging Face) model, ideal for quick species labeling.
+Advanced (Gemini AI): Deep multimodal analysis powered by Google's latest Gemini 2.0 Flash model.
+Hybrid (Verification): The most accurate mode. The local model provides an initial prediction which is then analyzed, verified, or corrected by Gemini AI.
+🚀 Getting Started
+Prerequisites:
+Python 3.10 or higher.
+A Google Gemini API Key (Available for free at Google AI Studio).
+Installation Steps:
+Clone the repository: Use the git clone command followed by your fork's URL.
+Enter the directory: Use the cd PlantVerse command.
+Install dependencies: Run pip install -r requirements.txt in your terminal.
+Launch the application: Run streamlit run app.py to start the web interface.
+📦 Technology Stack
+Framework: Streamlit
+AI Models: Gemini 2.0 Flash, FloraSense (Transformers/PyTorch)
+APIs: iNaturalist, Google AI Studio
+Core Language: Python 3.10+
+This project has been modernized to support advanced AI ensembles and improved user accessibility.
